@@ -1,6 +1,21 @@
 import time
 import re
+import os
 import requests
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Минимальный веб-сервер, чтобы Render работал БЕСПЛАТНО
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
 # 1. Твой API токен бота в МАКС
 MAX_BOT_TOKEN = "f9LHodD0cOLbabfFYsoiZq6EjnWBOC3L1J2g8avgAzs_KETkBsK0POzMM_CcL3tsbBCHwl4DXoPy0aZWh5nx"
@@ -27,12 +42,8 @@ CHANNELS = {
 BASE_URL = f"https://api.max.ru/bot{MAX_BOT_TOKEN}"
 
 def send_message_to_channel(channel_id, text):
-    """Отправка сообщения в канал МАКС"""
     url = f"{BASE_URL}/sendMessage"
-    payload = {
-        "chat_id": channel_id,
-        "text": text
-    }
+    payload = {"chat_id": channel_id, "text": text}
     try:
         res = requests.post(url, json=payload)
         return res.status_code == 200
@@ -41,7 +52,6 @@ def send_message_to_channel(channel_id, text):
         return False
 
 def parse_and_distribute(full_text):
-    """Разбор шаблона по каналам"""
     pattern = r'\((.*?)\)\s*\n([^()]+)'
     matches = re.findall(pattern, full_text)
     
@@ -64,8 +74,7 @@ def parse_and_distribute(full_text):
             
     return count
 
-def main():
-    """Слушаем сообщения, приходящие боту в ЛС"""
+def bot_loop():
     last_update_id = 0
     print("🚀 Бот-автопостер для МАКС запущен на Render и ждёт шаблонов!")
     
@@ -95,4 +104,7 @@ def main():
             time.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    # Запускаем веб-сервер в отдельном потоке
+    Thread(target=run_web_server, daemon=True).start()
+    # Запускаем бота
+    bot_loop()

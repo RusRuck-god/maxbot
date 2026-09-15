@@ -7,25 +7,29 @@ import urllib3
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Отключаем предупреждения об SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Минимальный веб-сервер, чтобы Render работал БЕСПЛАТНО
+print("🔧 СКРИПТ ЗАПУЩЕН, начало выполнения", flush=True)
+
+# Минимальный веб-сервер
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is running!")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
+    print(f"🌐 Веб-сервер стартует на порту {port}", flush=True)
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# 1. Твой API токен бота в MAX
 MAX_BOT_TOKEN = "f9LHodD0cOLbabfFYsoiZq6EjnWBOC3L1J2g8avgAzs_KETkBsK0POzMM_CcL3tsbBCHwl4DXoPy0aZWh5nx"
 
-# 2. База каналов и их ID
 CHANNELS = {
     "тебе знак": -78584619664640,
     "аня": -78584626349312,
@@ -44,103 +48,98 @@ CHANNELS = {
     "настя": -78584631723264
 }
 
-# 3. ПРАВИЛЬНЫЙ домен API
 API_URL = "https://platform-api2.max.ru"
-
-# 4. Токен в заголовке
 HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
 def send_message_to_channel(channel_id, text):
-    """Отправка сообщения в канал MAX"""
     url = f"{API_URL}/messages"
     params = {"chat_id": channel_id}
     payload = {"text": text}
     try:
         res = requests.post(url, headers=HEADERS, params=params, json=payload, verify=False)
+        print(f"📤 Отправка в {channel_id}: статус {res.status_code}", flush=True)
         if res.status_code == 200:
-            print(f"✅ Отправлено в {channel_id}")
             return True
         else:
-            print(f"❌ Ошибка {res.status_code}: {res.text}")
+            print(f"❌ Ошибка {res.status_code}: {res.text}", flush=True)
             return False
     except Exception as e:
-        print(f"Ошибка при отправке в {channel_id}: {e}")
+        print(f"Ошибка при отправке в {channel_id}: {e}", flush=True)
         return False
 
 def parse_and_distribute(full_text):
-    """Разбор шаблона по каналам"""
     pattern = r'\((.*?)\)\s*\n([^()]+)'
     matches = re.findall(pattern, full_text)
+    print(f"🔍 Найдено совпадений: {len(matches)}", flush=True)
     
     count = 0
     for channel_raw, post_text in matches:
         channel_name = channel_raw.strip().lower()
         clean_post = post_text.strip()
+        print(f"🔎 Канал: '{channel_name}', текст: '{clean_post[:50]}'", flush=True)
         
         if channel_name in CHANNELS:
             channel_id = CHANNELS[channel_name]
             success = send_message_to_channel(channel_id, clean_post)
             if success:
-                print(f"✅ Успешно выложено в [{channel_name}]: {clean_post}")
+                print(f"✅ Успешно выложено в [{channel_name}]", flush=True)
                 count += 1
             time.sleep(1)
         else:
-            print(f"⚠️ Канал '{channel_name}' не найден!")
+            print(f"⚠️ Канал '{channel_name}' не найден!", flush=True)
             
     return count
 
 def bot_loop():
     marker = None
-    print("🚀 Бот-автопостер для MAX запущен на Render!")
-    print("🔄 Начинаю цикл опроса /updates...")
+    print("🚀 bot_loop() НАЧАЛ РАБОТУ", flush=True)
     
     while True:
         try:
-            print("⏳ Отправляю запрос к /updates...")
+            print("⏳ Запрос к /updates...", flush=True)
             params = {"timeout": 30}
             if marker:
                 params["marker"] = marker
             
             res = requests.get(f"{API_URL}/updates", headers=HEADERS, params=params, verify=False)
-            print(f"📡 Ответ API: {res.status_code}")
+            print(f"📡 Ответ API: {res.status_code}", flush=True)
             
             if res.status_code != 200:
-                print(f"Ошибка API: {res.status_code}")
+                print(f"Ошибка API: {res.status_code}", flush=True)
                 time.sleep(5)
                 continue
             
             data = res.json()
-            print(f"📦 Данные: {json.dumps(data, ensure_ascii=False)[:500]}")
+            print(f"📦 Данные: {json.dumps(data, ensure_ascii=False)[:300]}", flush=True)
             
             if "updates" in data:
                 for update in data["updates"]:
-                    print("\n" + "=" * 60)
-                    print("ПОЛУЧЕНО ОБНОВЛЕНИЕ:")
-                    print(json.dumps(update, indent=2, ensure_ascii=False))
-                    print("=" * 60)
+                    print("=" * 60, flush=True)
+                    print(json.dumps(update, indent=2, ensure_ascii=False), flush=True)
+                    print("=" * 60, flush=True)
                     
                     if "marker" in data:
                         marker = data["marker"]
                     
-                    # Обрабатываем текстовые сообщения
                     if update.get("update_type") == "message_created":
                         message = update.get("message", {})
                         chat_id = message.get("recipient", {}).get("chat_id")
                         msg_text = message.get("body", {}).get("text", "")
                         
                         if msg_text and chat_id:
-                            print(f"\n📩 Получен шаблон!")
+                            print(f"📩 Получен шаблон!", flush=True)
                             posted_count = parse_and_distribute(msg_text)
                             
-                            # Отвечаем в ЛС
                             requests.post(f"{API_URL}/messages", headers=HEADERS,
                                           params={"chat_id": chat_id},
                                           json={"text": f"🎉 Готово! Разослано постов: {posted_count} из 15."},
                                           verify=False)
         except Exception as e:
-            print(f"Ошибка цикла: {e}")
+            print(f"❌ Ошибка цикла: {e}", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":
+    print("🔧 Запускаю веб-сервер в фоне и бота в основном потоке", flush=True)
     Thread(target=run_web_server, daemon=True).start()
+    print("🔧 Веб-сервер запущен, теперь запускаю bot_loop()", flush=True)
     bot_loop()

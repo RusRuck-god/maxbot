@@ -94,6 +94,24 @@ def bot_loop():
     marker = None
     print("🚀 bot_loop() НАЧАЛ РАБОТУ", flush=True)
     
+    # --- УДАЛЯЕМ WEBHOOK-ПОДПИСКИ (чтобы работал Long Polling) ---
+    print("🧹 Проверяю и удаляю webhook-подписки...", flush=True)
+    try:
+        subs_res = requests.get(f"{API_URL}/subscriptions", headers=HEADERS, verify=False)
+        print(f"📋 Ответ /subscriptions: {subs_res.status_code} - {subs_res.text[:500]}", flush=True)
+        subs_data = subs_res.json()
+        if "subscriptions" in subs_data and subs_data["subscriptions"]:
+            for sub in subs_data["subscriptions"]:
+                url_to_del = sub.get("url")
+                if url_to_del:
+                    del_res = requests.delete(f"{API_URL}/subscriptions", headers=HEADERS, params={"url": url_to_del}, verify=False)
+                    print(f"🗑️ Удалена подписка {url_to_del}: {del_res.status_code}", flush=True)
+        else:
+            print("✅ Активных webhook-подписок нет", flush=True)
+    except Exception as e:
+        print(f"⚠️ Ошибка при удалении подписок: {e}", flush=True)
+    # -----------------------------------------------------------
+    
     while True:
         try:
             print("⏳ Запрос к /updates...", flush=True)

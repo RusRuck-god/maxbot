@@ -1,9 +1,14 @@
 import time
 import re
 import os
+import json
 import requests
+import urllib3
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Отключаем предупреждения об SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Минимальный веб-сервер, чтобы Render работал БЕСПЛАТНО
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -17,7 +22,7 @@ def run_web_server():
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-# 1. Твой API токен бота в МАКС
+# 1. Твой API токен бота в MAX
 MAX_BOT_TOKEN = "f9LHodD0cOLbabfFYsoiZq6EjnWBOC3L1J2g8avgAzs_KETkBsK0POzMM_CcL3tsbBCHwl4DXoPy0aZWh5nx"
 
 # 2. База каналов и их ID
@@ -39,19 +44,31 @@ CHANNELS = {
     "настя": -78584631723264
 }
 
-BASE_URL = f"https://api.max.ru/bot{MAX_BOT_TOKEN}"
+# 3. ПРАВИЛЬНЫЙ домен API
+API_URL = "https://platform-api2.max.ru"
+
+# 4. Токен в заголовке
+HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
 def send_message_to_channel(channel_id, text):
-    url = f"{BASE_URL}/sendMessage"
-    payload = {"chat_id": channel_id, "text": text}
+    """Отправка сообщения в канал MAX"""
+    url = f"{API_URL}/messages"
+    params = {"chat_id": channel_id}
+    payload = {"text": text}
     try:
-        res = requests.post(url, json=payload)
-        return res.status_code == 200
+        res = requests.post(url, headers=HEADERS, params=params, json=payload, verify=False)
+        if res.status_code == 200:
+            print(f"✅ Отправлено в {channel_id}")
+            return True
+        else:
+            print(f"❌ Ошибка {res.status_code}: {res.text}")
+            return False
     except Exception as e:
         print(f"Ошибка при отправке в {channel_id}: {e}")
         return False
 
 def parse_and_distribute(full_text):
+    """Разбор шаблона по каналам"""
     pattern = r'\((.*?)\)\s*\n([^()]+)'
     matches = re.findall(pattern, full_text)
     
@@ -66,45 +83,60 @@ def parse_and_distribute(full_text):
             if success:
                 print(f"✅ Успешно выложено в [{channel_name}]: {clean_post}")
                 count += 1
-            else:
-                print(f"❌ Ошибка отправки в [{channel_name}]")
             time.sleep(1)
         else:
-            print(f"⚠️ Канал '{channel_name}' не найден в базе ID!")
+            print(f"⚠️ Канал '{channel_name}' не найден!")
             
     return count
 
 def bot_loop():
-    last_update_id = 0
-    print("🚀 Бот-автопостер для МАКС запущен на Render и ждёт шаблонов!")
+    marker = None
+    print("🚀 Бот-автопостер для MAX запущен на Render!")
     
     while True:
         try:
-            url = f"{BASE_URL}/getUpdates?offset={last_update_id + 1}&timeout=30"
-            response = requests.get(url).json()
+            params = {"timeout": 30}
+            if marker:
+                params["marker"] = marker
             
-            if "result" in response:
-                for update in response["result"]:
-                    last_update_id = update["update_id"]
+            res = requests.get(f"{API_URL}/updates", headers=HEADERS, params=params, verify=False)
+            
+            if res.status_code != 200:
+                print(f"Ошибка API: {res.status_code}")
+                time.sleep(5)
+                continue
+            
+            data = res.json()
+            
+            if "updates" in data:
+                for update in data["updates"]:
+                    print("\n" + "=" * 60)
+                    print("ПОЛУЧЕНО ОБНОВЛЕНИЕ:")
+                    print(json.dumps(update, indent=2, ensure_ascii=False))
+                    print("=" * 60)
                     
-                    if "message" in update and "text" in update["message"]:
-                        chat_id = update["message"]["chat"]["id"]
-                        msg_text = update["message"]["text"]
+                    if "marker" in data:
+                        marker = data["marker"]
+                    
+                    # Обрабатываем текстовые сообщения
+                    if update.get("update_type") == "message_created":
+                        message = update.get("message", {})
+                        chat_id = message.get("recipient", {}).get("chat_id")
+                        msg_text = message.get("body", {}).get("text", "")
                         
-                        print(f"\n📩 Получен новый шаблон от пользователя!")
-                        posted_count = parse_and_distribute(msg_text)
-                        
-                        reply_url = f"{BASE_URL}/sendMessage"
-                        requests.post(reply_url, json={
-                            "chat_id": chat_id,
-                            "text": f"🎉 Готово! Разослано постов: {posted_count} из 15."
-                        })
+                        if msg_text and chat_id:
+                            print(f"\n📩 Получен шаблон!")
+                            posted_count = parse_and_distribute(msg_text)
+                            
+                            # Отвечаем в ЛС
+                            requests.post(f"{API_URL}/messages", headers=HEADERS,
+                                          params={"chat_id": chat_id},
+                                          json={"text": f"🎉 Готово! Разослано постов: {posted_count} из 15."},
+                                          verify=False)
         except Exception as e:
             print(f"Ошибка цикла: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":
-    # Запускаем веб-сервер в отдельном потоке
     Thread(target=run_web_server, daemon=True).start()
-    # Запускаем бота
     bot_loop()

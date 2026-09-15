@@ -92,14 +92,17 @@ def parse_and_distribute(full_text):
 def bot_loop():
     marker = None
     print("🚀 Бот-автопостер для MAX запущен на Render!")
+    print("🔄 Начинаю цикл опроса /updates...")
     
     while True:
         try:
+            print("⏳ Отправляю запрос к /updates...")
             params = {"timeout": 30}
             if marker:
                 params["marker"] = marker
             
             res = requests.get(f"{API_URL}/updates", headers=HEADERS, params=params, verify=False)
+            print(f"📡 Ответ API: {res.status_code}")
             
             if res.status_code != 200:
                 print(f"Ошибка API: {res.status_code}")
@@ -107,6 +110,7 @@ def bot_loop():
                 continue
             
             data = res.json()
+            print(f"📦 Данные: {json.dumps(data, ensure_ascii=False)[:500]}")
             
             if "updates" in data:
                 for update in data["updates"]:

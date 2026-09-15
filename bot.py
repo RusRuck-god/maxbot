@@ -11,7 +11,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 print("🔧 СКРИПТ ЗАПУЩЕН, начало выполнения", flush=True)
 
-# Минимальный веб-сервер
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -51,10 +50,37 @@ CHANNELS = {
 API_URL = "https://platform-api2.max.ru"
 HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
+def remove_webhooks():
+    """Удаляет все активные webhook-подписки"""
+    print("🧹 Проверяю webhook-подписки...", flush=True)
+    try:
+        subs_res = requests.get(f"{API_URL}/subscriptions", headers=HEADERS, verify=False)
+        subs_data = subs_res.json()
+        if "subscriptions" in subs_data and subs_data["subscriptions"]:
+            for sub in subs_data["subscriptions"]:
+                url_to_del = sub.get("url")
+                if url_to_del:
+                    del_res = requests.delete(f"{API_URL}/subscriptions", headers=HEADERS, params={"url": url_to_del}, verify=False)
+                    print(f"🗑️ Удалена подписка {url_to_del}: {del_res.status_code}", flush=True)
+        else:
+            print("✅ Подписок нет", flush=True)
+    except Exception as e:
+        print(f"⚠️ Ошибка при удалении подписок: {e}", flush=True)
+
 def send_message_to_channel(channel_id, text):
+    """Отправка сообщения в канал MAX (с поддержкой ссылок и форматирования)"""
     url = f"{API_URL}/messages"
     params = {"chat_id": channel_id}
+    
+    has_html = bool(re.search(r"<(?:b|strong|i|em|u|ins|s|del|code|pre|a)(?:\s+[^>]*)?>", text, re.IGNORECASE))
+    has_markdown = bool(re.search(r"(\*\*[^\n]+\*\*|__[^\n]+__|`[^\n]+`|\[[^\]]+\]\([^\)]+\))", text))
+    
     payload = {"text": text}
+    if has_html:
+        payload["format"] = "html"
+    elif has_markdown:
+        payload["format"] = "markdown"
+    
     try:
         res = requests.post(url, headers=HEADERS, params=params, json=payload, verify=False)
         print(f"📤 Отправка в {channel_id}: статус {res.status_code}", flush=True)
@@ -68,52 +94,57 @@ def send_message_to_channel(channel_id, text):
         return False
 
 def parse_and_distribute(full_text):
-    pattern = r'\((.*?)\)\s*\n([^()]+)'
-    matches = re.findall(pattern, full_text)
-    print(f"🔍 Найдено совпадений: {len(matches)}", flush=True)
+    """Разбор шаблона по каналам (построчно, надёжнее регулярки)"""
+    lines = full_text.strip().split('\n')
     
     count = 0
-    for channel_raw, post_text in matches:
-        channel_name = channel_raw.strip().lower()
-        clean_post = post_text.strip()
-        print(f"🔎 Канал: '{channel_name}', текст: '{clean_post[:50]}'", flush=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
         
-        if channel_name in CHANNELS:
-            channel_id = CHANNELS[channel_name]
-            success = send_message_to_channel(channel_id, clean_post)
-            if success:
-                print(f"✅ Успешно выложено в [{channel_name}]", flush=True)
-                count += 1
-            time.sleep(1)
-        else:
-            print(f"⚠️ Канал '{channel_name}' не найден!", flush=True)
+        match = re.match(r'^\((.+?)\)$', line)
+        if match:
+            channel_name = match.group(1).strip().lower()
             
+            post_lines = []
+            i += 1
+            while i < len(lines):
+                next_line = lines[i].strip()
+                if re.match(r'^\((.+?)\)$', next_line):
+                    break
+                if next_line:
+                    post_lines.append(next_line)
+                i += 1
+            
+            clean_post = ' '.join(post_lines).strip()
+            
+            if channel_name in CHANNELS and clean_post:
+                channel_id = CHANNELS[channel_name]
+                success = send_message_to_channel(channel_id, clean_post)
+                if success:
+                    print(f"✅ Успешно выложено в [{channel_name}]: {clean_post[:50]}", flush=True)
+                    count += 1
+                time.sleep(1)
+            elif channel_name not in CHANNELS:
+                print(f"⚠️ Канал '{channel_name}' не найден!", flush=True)
+        else:
+            i += 1
+    
     return count
 
 def bot_loop():
     marker = None
     print("🚀 bot_loop() НАЧАЛ РАБОТУ", flush=True)
     
-    # --- УДАЛЯЕМ WEBHOOK-ПОДПИСКИ (чтобы работал Long Polling) ---
-    print("🧹 Проверяю и удаляю webhook-подписки...", flush=True)
-    try:
-        subs_res = requests.get(f"{API_URL}/subscriptions", headers=HEADERS, verify=False)
-        print(f"📋 Ответ /subscriptions: {subs_res.status_code} - {subs_res.text[:500]}", flush=True)
-        subs_data = subs_res.json()
-        if "subscriptions" in subs_data and subs_data["subscriptions"]:
-            for sub in subs_data["subscriptions"]:
-                url_to_del = sub.get("url")
-                if url_to_del:
-                    del_res = requests.delete(f"{API_URL}/subscriptions", headers=HEADERS, params={"url": url_to_del}, verify=False)
-                    print(f"🗑️ Удалена подписка {url_to_del}: {del_res.status_code}", flush=True)
-        else:
-            print("✅ Активных webhook-подписок нет", flush=True)
-    except Exception as e:
-        print(f"⚠️ Ошибка при удалении подписок: {e}", flush=True)
-    # -----------------------------------------------------------
+    remove_webhooks()
     
+    counter = 0
     while True:
         try:
+            counter += 1
+            if counter % 10 == 0:
+                remove_webhooks()
+            
             print("⏳ Запрос к /updates...", flush=True)
             params = {"timeout": 30}
             if marker:
@@ -142,7 +173,12 @@ def bot_loop():
                     if update.get("update_type") == "message_created":
                         message = update.get("message", {})
                         chat_id = message.get("recipient", {}).get("chat_id")
+                        sender_id = message.get("sender", {}).get("user_id")
                         msg_text = message.get("body", {}).get("text", "")
+                        
+                        if sender_id != 68399360:
+                            print(f"⛔ Игнорирую постороннего (ID: {sender_id})", flush=True)
+                            continue
                         
                         if msg_text and chat_id:
                             print(f"📩 Получен шаблон!", flush=True)

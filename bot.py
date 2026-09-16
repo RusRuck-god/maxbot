@@ -155,7 +155,6 @@ def format_recipe(text):
     if not lines:
         return text
     
-    # Название - первая непустая строка
     title = ""
     start_idx = 0
     for i, line in enumerate(lines):
@@ -164,7 +163,13 @@ def format_recipe(text):
             start_idx = i + 1
             break
     
-    # Ищем ингредиенты (до "Приготовление", "Выпекаем", "🔥", "❤️", "Понравилось" и т.д.)
+    # Переносим эмодзи из конца строки в начало
+    emoji_match = re.search(r'([\U0001F300-\U0001FAFF\u2600-\u27BF]+)\s*$', title)
+    if emoji_match:
+        emoji = emoji_match.group(1)
+        title = title[:emoji_match.start()].strip()
+        title = f"{emoji} {title}"
+    
     ingredients = []
     stop_words = ['приготовление', 'выпекаем', '🔥', '❤️', 'понравилось', 'поделись', 'поделитесь', 'подписаться', 'рецепты', '🥘']
     
@@ -173,24 +178,21 @@ def format_recipe(text):
         if not line_stripped:
             continue
         
-        # Проверяем стоп-слова
         lower_line = line_stripped.lower()
         if any(sw in lower_line for sw in stop_words):
             break
         
-        # Пропускаем строки "Ингредиенты:" (мы добавим свою)
         if 'ингредиент' in lower_line:
             continue
         
         ingredients.append(line_stripped)
     
-    # Собираем пост
     result = f"<b>{title}</b>\n\n"
     result += "<b>📝 Ингредиенты:</b>\n\n"
     result += '\n'.join(ingredients) + "\n\n"
     result += "<i>🥰 Понравилось?</i>\n"
     result += "<b>Поделись с другом!</b>\n\n"
-    result += "<b>Рецепты на Каждый день 🥗</b> <a href='https://max.ru/channel_recept_every_day'>Подписаться</a>"
+    result += "<b><a href='https://max.ru/channel_recept_every_day'>Рецепты на Каждый день 🥗</a></b>"
     
     return result
 

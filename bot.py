@@ -133,6 +133,29 @@ def parse_and_distribute(full_text):
     
     return count
 
+def format_horoscope(text):
+    """Форматирует гороскоп: жирные заголовки + ссылка в конце"""
+    lines = text.strip().split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            formatted_lines.append('')
+            continue
+        
+        # Проверяем, начинается ли строка со знака зодиака
+        if re.match(r'^[♈♉♊♋♌♍♎♏♐♑♒♓]', line):
+            # Это заголовок знака - делаем жирным
+            formatted_lines.append(f"<b>{line}</b>")
+        elif line.startswith('🌞'):
+            # Последняя строка - жирный + ссылка
+            formatted_lines.append(f"<b>{line} <a href='https://max.ru/channel_tvoy_goroskop'>Твой Гороскоп</a></b>")
+        else:
+            formatted_lines.append(line)
+    
+    return '\n'.join(formatted_lines)
+
 def bot_loop():
     marker = None
     processed_mids = set()
@@ -195,6 +218,22 @@ def bot_loop():
                         
                         if msg_text and chat_id:
                             print(f"📩 Получен шаблон!", flush=True)
+                            
+                            # Проверяем, не гороскоп ли это
+                            if not msg_text.strip().startswith('('):
+                                # Это гороскоп - форматируем и отправляем обратно в ЛС
+                                formatted_text = format_horoscope(msg_text)
+                                requests.post(
+                                    f"{API_URL}/messages",
+                                    headers=HEADERS,
+                                    params={"chat_id": chat_id},
+                                    json={"text": formatted_text, "format": "html"},
+                                    verify=False
+                                )
+                                print(f"✅ Гороскоп отправлен в ЛС", flush=True)
+                                continue
+                            
+                            # Иначе - это шаблон для каналов
                             posted_count = parse_and_distribute(msg_text)
                             
                             requests.post(f"{API_URL}/messages", headers=HEADERS,

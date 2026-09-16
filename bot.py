@@ -52,7 +52,6 @@ API_URL = "https://platform-api2.max.ru"
 HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
 def remove_webhooks():
-    """Удаляет все активные webhook-подписки"""
     print("🧹 Проверяю webhook-подписки...", flush=True)
     try:
         subs_res = requests.get(f"{API_URL}/subscriptions", headers=HEADERS, verify=False)
@@ -69,7 +68,6 @@ def remove_webhooks():
         print(f"⚠️ Ошибка при удалении подписок: {e}", flush=True)
 
 def send_message_to_channel(channel_id, text):
-    """Отправка сообщения в канал MAX (с поддержкой ссылок и форматирования)"""
     url = f"{API_URL}/messages"
     params = {"chat_id": channel_id}
     
@@ -95,7 +93,6 @@ def send_message_to_channel(channel_id, text):
         return False
 
 def parse_and_distribute(full_text):
-    """Разбор шаблона по каналам (построчно, надёжнее регулярки)"""
     lines = full_text.strip().split('\n')
     
     count = 0
@@ -134,7 +131,6 @@ def parse_and_distribute(full_text):
     return count
 
 def format_horoscope(text):
-    """Форматирует гороскоп: жирные заголовки + ссылка в конце"""
     lines = text.strip().split('\n')
     formatted_lines = []
     
@@ -144,17 +140,59 @@ def format_horoscope(text):
             formatted_lines.append('')
             continue
         
-        # Проверяем, начинается ли строка со знака зодиака
         if re.match(r'^[♈♉♊♋♌♍♎♏♐♑♒♓]', line):
-            # Это заголовок знака - делаем жирным
             formatted_lines.append(f"<b>{line}</b>")
         elif line.startswith('🌞'):
-            # Последняя строка - жирный + ссылка
-            formatted_lines.append(f"<b>{line} <a href='https://max.ru/channel_tvoy_goroskop'>Твой Гороскоп</a></b>")
+            formatted_lines.append(f"<b>{line}</b>")
         else:
             formatted_lines.append(line)
     
     return '\n'.join(formatted_lines)
+
+def format_recipe(text):
+    """Форматирует рецепт: жирное название, ингредиенты, ссылка на канал"""
+    lines = text.strip().split('\n')
+    if not lines:
+        return text
+    
+    # Название - первая непустая строка
+    title = ""
+    start_idx = 0
+    for i, line in enumerate(lines):
+        if line.strip():
+            title = line.strip()
+            start_idx = i + 1
+            break
+    
+    # Ищем ингредиенты (до "Приготовление", "Выпекаем", "🔥", "❤️", "Понравилось" и т.д.)
+    ingredients = []
+    stop_words = ['приготовление', 'выпекаем', '🔥', '❤️', 'понравилось', 'поделись', 'поделитесь', 'подписаться', 'рецепты', '🥘']
+    
+    for line in lines[start_idx:]:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        
+        # Проверяем стоп-слова
+        lower_line = line_stripped.lower()
+        if any(sw in lower_line for sw in stop_words):
+            break
+        
+        # Пропускаем строки "Ингредиенты:" (мы добавим свою)
+        if 'ингредиент' in lower_line:
+            continue
+        
+        ingredients.append(line_stripped)
+    
+    # Собираем пост
+    result = f"<b>{title}</b>\n\n"
+    result += "<b>📝 Ингредиенты:</b>\n\n"
+    result += '\n'.join(ingredients) + "\n\n"
+    result += "<i>🥰 Понравилось?</i>\n"
+    result += "<b>Поделись с другом!</b>\n\n"
+    result += "<b>Рецепты на Каждый день 🥗</b> <a href='https://max.ru/channel_recept_every_day'>Подписаться</a>"
+    
+    return result
 
 def bot_loop():
     marker = None
@@ -219,27 +257,33 @@ def bot_loop():
                         if msg_text and chat_id:
                             print(f"📩 Получен шаблон!", flush=True)
                             
-                            # Проверяем, не гороскоп ли это
-                            if not msg_text.strip().startswith('('):
-                                # Это гороскоп - форматируем и отправляем обратно в ЛС
+                            # 1. Если начинается с ( - это шаблон для каналов
+                            if msg_text.strip().startswith('('):
+                                posted_count = parse_and_distribute(msg_text)
+                                requests.post(f"{API_URL}/messages", headers=HEADERS,
+                                              params={"chat_id": chat_id},
+                                              json={"text": f"🎉 Готово! Разослано постов: {posted_count} из 15."},
+                                              verify=False)
+                                continue
+                            
+                            # 2. Если начинается со знака зодиака - это гороскоп
+                            if re.match(r'^[♈♉♊♋♌♍♎♏♐♑♒♓]', msg_text.strip()):
                                 formatted_text = format_horoscope(msg_text)
-                                requests.post(
-                                    f"{API_URL}/messages",
-                                    headers=HEADERS,
-                                    params={"chat_id": chat_id},
-                                    json={"text": formatted_text, "format": "html"},
-                                    verify=False
-                                )
+                                requests.post(f"{API_URL}/messages", headers=HEADERS,
+                                              params={"chat_id": chat_id},
+                                              json={"text": formatted_text, "format": "html"},
+                                              verify=False)
                                 print(f"✅ Гороскоп отправлен в ЛС", flush=True)
                                 continue
                             
-                            # Иначе - это шаблон для каналов
-                            posted_count = parse_and_distribute(msg_text)
-                            
+                            # 3. Иначе - это рецепт
+                            formatted_text = format_recipe(msg_text)
                             requests.post(f"{API_URL}/messages", headers=HEADERS,
                                           params={"chat_id": chat_id},
-                                          json={"text": f"🎉 Готово! Разослано постов: {posted_count} из 15."},
+                                          json={"text": formatted_text, "format": "html"},
                                           verify=False)
+                            print(f"✅ Рецепт отправлен в ЛС", flush=True)
+                            
         except Exception as e:
             print(f"❌ Ошибка цикла: {e}", flush=True)
             time.sleep(5)

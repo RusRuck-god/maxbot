@@ -44,7 +44,8 @@ CHANNELS = {
     "даша": -78586832815360,
     "катя": -78573444007168,
     "арина": -78586811712768,
-    "настя": -78584631723264
+    "настя": -78584631723264,
+    "тест": -78989554222336
 }
 
 API_URL = "https://platform-api2.max.ru"
@@ -134,6 +135,7 @@ def parse_and_distribute(full_text):
 
 def bot_loop():
     marker = None
+    processed_mids = set()
     print("🚀 bot_loop() НАЧАЛ РАБОТУ", flush=True)
     
     remove_webhooks()
@@ -172,6 +174,17 @@ def bot_loop():
                     
                     if update.get("update_type") == "message_created":
                         message = update.get("message", {})
+                        mid = message.get("body", {}).get("mid", "")
+                        
+                        if mid in processed_mids:
+                            print(f"⏭️ Дубликат {mid}, пропускаю", flush=True)
+                            continue
+                        processed_mids.add(mid)
+                        
+                        if len(processed_mids) > 1000:
+                            processed_mids.clear()
+                            print("🧹 Очистил processed_mids", flush=True)
+                        
                         chat_id = message.get("recipient", {}).get("chat_id")
                         sender_id = message.get("sender", {}).get("user_id")
                         msg_text = message.get("body", {}).get("text", "")

@@ -36,18 +36,14 @@ CHANNELS = {
 API_URL = "https://platform-api2.max.ru"
 HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
-# Твой user_id для проверки
 ADMIN_USER_ID = 68399360
-
-# Секрет для проверки, что вебхук от MAX
 WEBHOOK_SECRET = "your_secret_here_change_me"
 
-# ==== ХРАНИЛИЩЕ ДЛЯ ОТЛОЖЕННЫХ ПОСТОВ ====
-# Формат: { "HH:MM": [список каналов и текстов] }
+# ==== ХРАНИЛИЩА ====
 scheduled_posts = {}
+processed_mids = set()
 
 def send_message_to_channel(channel_id, text):
-    """Отправка сообщения в канал MAX"""
     url = f"{API_URL}/messages"
     params = {"chat_id": channel_id}
     
@@ -73,7 +69,6 @@ def send_message_to_channel(channel_id, text):
         return False
 
 def parse_and_distribute(full_text):
-    """Разбор шаблона по каналам"""
     lines = full_text.strip().split('\n')
     
     count = 0
@@ -175,7 +170,6 @@ def format_recipe(text):
     return result
 
 def send_message_to_user(chat_id, text):
-    """Отправка сообщения в ЛС пользователю"""
     url = f"{API_URL}/messages"
     params = {"chat_id": chat_id}
     try:
@@ -183,10 +177,11 @@ def send_message_to_user(chat_id, text):
     except Exception as e:
         print(f"Ошибка отправки в ЛС: {e}", flush=True)
 
-# ==== ЭНДПОИНТ ДЛЯ ВЕБХУКА ====
+# ==== ВЕБХУК ====
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # Проверяем секрет
+    global processed_mids
+    
     secret_header = request.headers.get('X-Max-Bot-Api-Secret')
     if secret_header != WEBHOOK_SECRET:
         print(f"⛔ Неверный секрет: {secret_header}", flush=True)
@@ -200,11 +195,21 @@ def webhook():
     if update_type == "message_created":
         message = data.get("message", {})
         mid = message.get("body", {}).get("mid", "")
+        
+        # 🔒 ЗАЩИТА ОТ ДУБЛИКАТОВ
+        if mid in processed_mids:
+            print(f"⏭️ Дубликат {mid}, пропускаю", flush=True)
+            return jsonify({"ok": True}), 200
+        processed_mids.add(mid)
+        
+        if len(processed_mids) > 1000:
+            processed_mids.clear()
+            print("🧹 Очистил processed_mids", flush=True)
+        
         chat_id = message.get("recipient", {}).get("chat_id")
         sender_id = message.get("sender", {}).get("user_id")
         msg_text = message.get("body", {}).get("text", "")
         
-        # Игнорируем не админа
         if sender_id != ADMIN_USER_ID:
             print(f"⛔ Игнорирую постороннего (ID: {sender_id})", flush=True)
             return jsonify({"ok": True}), 200
@@ -212,20 +217,17 @@ def webhook():
         if msg_text and chat_id:
             print(f"📩 Получен шаблон!", flush=True)
             
-            # 1. Шаблон для каналов (начинается с "(")
             if msg_text.strip().startswith('('):
                 posted_count = parse_and_distribute(msg_text)
                 send_message_to_user(chat_id, f"🎉 Готово! Разослано постов: {posted_count} из 15.")
                 return jsonify({"ok": True}), 200
             
-            # 2. Гороскоп (начинается со знака зодиака)
             if re.match(r'^[♈♉♊♋♌♍♎♏♐♑♒♓]', msg_text.strip()):
                 formatted_text = format_horoscope(msg_text)
                 send_message_to_user(chat_id, formatted_text)
                 print(f"✅ Гороскоп отправлен в ЛС", flush=True)
                 return jsonify({"ok": True}), 200
             
-            # 3. Рецепт (всё остальное)
             formatted_text = format_recipe(msg_text)
             send_message_to_user(chat_id, formatted_text)
             print(f"✅ Рецепт отправлен в ЛС", flush=True)
@@ -238,7 +240,6 @@ def webhook():
 # ==== ПЛАНИРОВЩИК ====
 @app.route('/cron', methods=['GET'])
 def cron():
-    """Этот эндпоинт будет вызывать cron-job.org каждую минуту"""
     global scheduled_posts
     now = datetime.now().strftime("%H:%M")
     
@@ -253,7 +254,6 @@ def cron():
 
 @app.route('/schedule', methods=['POST'])
 def schedule():
-    """Эндпоинт для сохранения отложенных постов (вызывается ботом)"""
     global scheduled_posts
     data = request.json
     time_slot = data.get("time")
@@ -270,6 +270,10 @@ def schedule():
 
 @app.route('/health', methods=['GET'])
 def health():
+    return "Bot is running!"
+
+@app.route('/', methods=['GET'])
+def index():
     return "Bot is running!"
 
 if __name__ == "__main__":

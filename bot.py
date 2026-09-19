@@ -53,10 +53,8 @@ WEBHOOK_SECRET = "your_secret_here_change_me"
 scheduled_posts = {}
 processed_mids = set()
 
-# Очередь для ногтей: список словарей {"token": "...", "type": "image"}
+# Очередь для ногтей: список токенов
 nails_queue = []
-# Индекс для слотов ногтей (какой слот следующий)
-nails_slot_index = 0
 
 def send_message_to_channel(channel_id, text):
     url = f"{API_URL}/messages"
@@ -108,45 +106,6 @@ def send_nails_post(token):
     except Exception as e:
         print(f"Ошибка при отправке ногтей: {e}", flush=True)
         return False
-
-def upload_photo_to_max(photo_url):
-    """Загрузка фото в MAX, возвращает token"""
-    try:
-        # Шаг 1: получаем upload_url
-        upload_res = requests.post(f"{API_URL}/uploads", headers=HEADERS, params={"type": "image"}, verify=False)
-        if upload_res.status_code != 200:
-            print(f"❌ Ошибка получения upload_url: {upload_res.status_code} - {upload_res.text}", flush=True)
-            return None
-        
-        upload_data = upload_res.json()
-        upload_url = upload_data.get("url")
-        if not upload_url:
-            print(f"❌ Нет url в ответе /uploads: {upload_data}", flush=True)
-            return None
-        
-        # Шаг 2: скачиваем фото из MAX и загружаем по upload_url
-        photo_res = requests.get(photo_url, verify=False)
-        if photo_res.status_code != 200:
-            print(f"❌ Ошибка скачивания фото: {photo_res.status_code}", flush=True)
-            return None
-        
-        upload_photo_res = requests.post(upload_url, data=photo_res.content, verify=False)
-        if upload_photo_res.status_code != 200:
-            print(f"❌ Ошибка загрузки фото: {upload_photo_res.status_code} - {upload_photo_res.text}", flush=True)
-            return None
-        
-        # Шаг 3: получаем token
-        token_data = upload_photo_res.json()
-        token = token_data.get("token")
-        if token:
-            print(f"✅ Фото загружено, token: {token[:50]}...", flush=True)
-            return token
-        else:
-            print(f"❌ Нет token в ответе: {token_data}", flush=True)
-            return None
-    except Exception as e:
-        print(f"❌ Ошибка загрузки фото: {e}", flush=True)
-        return None
 
 def parse_and_distribute(full_text):
     lines = full_text.strip().split('\n')
@@ -296,22 +255,20 @@ def webhook():
         
         # ==== ПРОВЕРКА: ЕСТЬ ЛИ ФОТО? ====
         attachments = message.get("body", {}).get("attachments", [])
-        photo_url = None
+        photo_token = None
+        
         for att in attachments:
             if att.get("type") == "image":
-                photo_url = att.get("payload", {}).get("url")
+                # Берём token напрямую из payload — MAX уже загрузил фото!
+                photo_token = att.get("payload", {}).get("token")
+                if photo_token:
+                    print(f"📸 Получен token фото: {photo_token[:50]}...", flush=True)
                 break
         
-        if photo_url:
-            # Это фото с ногтями
-            print(f"📸 Получено фото, загружаю в MAX...", flush=True)
-            token = upload_photo_to_max(photo_url)
-            if token:
-                nails_queue.append(token)
-                send_message_to_user(chat_id, f"✅ Фото добавлено в очередь ногтей. В очереди: {len(nails_queue)} шт.")
-                print(f"📋 В очереди ногтей: {len(nails_queue)} шт.", flush=True)
-            else:
-                send_message_to_user(chat_id, "❌ Не удалось загрузить фото.")
+        if photo_token:
+            nails_queue.append(photo_token)
+            send_message_to_user(chat_id, f"✅ Фото добавлено в очередь ногтей. В очереди: {len(nails_queue)} шт.")
+            print(f"📋 В очереди ногтей: {len(nails_queue)} шт.", flush=True)
             return jsonify({"ok": True}), 200
         
         if msg_text and chat_id:
@@ -340,7 +297,7 @@ def webhook():
 # ==== ПЛАНИРОВЩИК ====
 @app.route('/cron', methods=['GET'])
 def cron():
-    global scheduled_posts, nails_queue, nails_slot_index
+    global scheduled_posts, nails_queue
     now = datetime.now().strftime("%H:%M")
     
     # Обычные отложенные посты
@@ -359,7 +316,6 @@ def cron():
         if success:
             print(f"✅ Ногти опубликованы, в очереди осталось: {len(nails_queue)}", flush=True)
         else:
-            # Если не удалось — возвращаем в начало очереди
             nails_queue.insert(0, token)
             print(f"❌ Не удалось опубликовать ногти, вернул в очередь", flush=True)
     

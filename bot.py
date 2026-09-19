@@ -34,28 +34,88 @@ CHANNELS = {
     "тестовый калл": -78989554222336
 }
 
-# Канал для ногтей
 NAILS_CHANNEL_ID = -78143961564416
-
-# Слоты для ногтей
 NAILS_SLOTS = ["11:00", "13:00", "15:00", "17:00", "19:00", "21:00"]
-
-# Подпись для ногтей
 NAILS_CAPTION = "<b>Гламурный Маникюр 💅 НОГТИ</b>\n<a href='https://max.ru/channel_glamour_manic'>Подписаться</a>"
 
 API_URL = "https://platform-api2.max.ru"
 HEADERS = {"Authorization": MAX_BOT_TOKEN}
 
+# ==== SUPABASE ====
+SUPABASE_URL = "https://ehhajdubxnarrwamypar.supabase.co"
+SUPABASE_KEY = "sb_publishable_XxGXgOoCNiVPSxKlFzF7Zg_8OoWiprm"
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+}
+
 ADMIN_USER_ID = 68399360
 WEBHOOK_SECRET = "your_secret_here_change_me"
 
-# ==== ХРАНИЛИЩА ====
 scheduled_posts = {}
 processed_mids = set()
 
-# Очередь для ногтей: список токенов
-nails_queue = []
+# ==== ФУНКЦИИ SUPABASE ====
+def supabase_add_nail(token):
+    """Добавляет токен в очередь ногтей в Supabase"""
+    url = f"{SUPABASE_URL}/rest/v1/nails"
+    payload = {"token": token}
+    try:
+        res = requests.post(url, headers=SUPABASE_HEADERS, json=payload, verify=False)
+        if res.status_code in (200, 201):
+            print(f"✅ Токен добавлен в Supabase", flush=True)
+            return True
+        else:
+            print(f"❌ Ошибка Supabase add: {res.status_code} - {res.text}", flush=True)
+            return False
+    except Exception as e:
+        print(f"❌ Ошибка Supabase: {e}", flush=True)
+        return False
 
+def supabase_get_first_nail():
+    """Берёт первый токен из очереди ногтей"""
+    url = f"{SUPABASE_URL}/rest/v1/nails?select=id,token&order=id.asc&limit=1"
+    try:
+        res = requests.get(url, headers=SUPABASE_HEADERS, verify=False)
+        if res.status_code == 200:
+            data = res.json()
+            if data and len(data) > 0:
+                return data[0]
+        return None
+    except Exception as e:
+        print(f"❌ Ошибка Supabase get: {e}", flush=True)
+        return None
+
+def supabase_delete_nail(nail_id):
+    """Удаляет токен из очереди после публикации"""
+    url = f"{SUPABASE_URL}/rest/v1/nails?id=eq.{nail_id}"
+    try:
+        res = requests.delete(url, headers=SUPABASE_HEADERS, verify=False)
+        if res.status_code in (200, 204):
+            print(f"✅ Токен удалён из Supabase", flush=True)
+            return True
+        else:
+            print(f"❌ Ошибка Supabase delete: {res.status_code} - {res.text}", flush=True)
+            return False
+    except Exception as e:
+        print(f"❌ Ошибка Supabase delete: {e}", flush=True)
+        return False
+
+def supabase_count_nails():
+    """Считает количество токенов в очереди"""
+    url = f"{SUPABASE_URL}/rest/v1/nails?select=id"
+    try:
+        res = requests.get(url, headers=SUPABASE_HEADERS, verify=False)
+        if res.status_code == 200:
+            return len(res.json())
+        return 0
+    except Exception as e:
+        print(f"❌ Ошибка Supabase count: {e}", flush=True)
+        return 0
+
+# ==== ОТПРАВКА В MAX ====
 def send_message_to_channel(channel_id, text):
     url = f"{API_URL}/messages"
     params = {"chat_id": channel_id}
@@ -72,27 +132,20 @@ def send_message_to_channel(channel_id, text):
     try:
         res = requests.post(url, headers=HEADERS, params=params, json=payload, verify=False)
         print(f"📤 Отправка в {channel_id}: статус {res.status_code}", flush=True)
-        if res.status_code == 200:
-            return True
-        else:
-            print(f"❌ Ошибка {res.status_code}: {res.text}", flush=True)
-            return False
+        return res.status_code == 200
     except Exception as e:
         print(f"Ошибка при отправке в {channel_id}: {e}", flush=True)
         return False
 
 def send_nails_post(token):
-    """Отправка поста с ногтями (фото + подпись) в канал"""
+    """Отправка поста с ногтями в канал"""
     url = f"{API_URL}/messages"
     params = {"chat_id": NAILS_CHANNEL_ID}
     payload = {
         "text": NAILS_CAPTION,
         "format": "html",
         "attachments": [
-            {
-                "type": "image",
-                "payload": {"token": token}
-            }
+            {"type": "image", "payload": {"token": token}}
         ]
     }
     try:
@@ -109,16 +162,13 @@ def send_nails_post(token):
 
 def parse_and_distribute(full_text):
     lines = full_text.strip().split('\n')
-    
     count = 0
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        
         match = re.match(r'^\((.+?)\)$', line)
         if match:
             channel_name = match.group(1).strip().lower()
-            
             post_lines = []
             i += 1
             while i < len(lines):
@@ -128,9 +178,7 @@ def parse_and_distribute(full_text):
                 if next_line:
                     post_lines.append(next_line)
                 i += 1
-            
             clean_post = ' '.join(post_lines).strip()
-            
             if channel_name in CHANNELS and clean_post:
                 channel_id = CHANNELS[channel_name]
                 success = send_message_to_channel(channel_id, clean_post)
@@ -141,33 +189,28 @@ def parse_and_distribute(full_text):
                 print(f"⚠️ Канал '{channel_name}' не найден!", flush=True)
         else:
             i += 1
-    
     return count
 
 def format_horoscope(text):
     lines = text.strip().split('\n')
     formatted_lines = []
-    
     for line in lines:
         line = line.strip()
         if not line:
             formatted_lines.append('')
             continue
-        
         if re.match(r'^[♈♉♊♋♌♍♎♏♐♑♒♓]', line):
             formatted_lines.append(f"<b>{line}</b>")
         elif line.startswith('🌞'):
             formatted_lines.append(f"<b>{line}</b>")
         else:
             formatted_lines.append(line)
-    
     return '\n'.join(formatted_lines)
 
 def format_recipe(text):
     lines = text.strip().split('\n')
     if not lines:
         return text
-    
     title = ""
     start_idx = 0
     for i, line in enumerate(lines):
@@ -175,37 +218,29 @@ def format_recipe(text):
             title = line.strip()
             start_idx = i + 1
             break
-    
     emoji_match = re.search(r'([\U0001F300-\U0001FAFF\u2600-\u27BF]+)\s*$', title)
     if emoji_match:
         emoji = emoji_match.group(1)
         title = title[:emoji_match.start()].strip()
         title = f"{emoji} {title}"
-    
     ingredients = []
     stop_words = ['приготовление', 'выпекаем', '🔥', '❤️', 'понравилось', 'поделись', 'поделитесь', 'подписаться', 'рецепты', '🥘']
-    
     for line in lines[start_idx:]:
         line_stripped = line.strip()
         if not line_stripped:
             continue
-        
         lower_line = line_stripped.lower()
         if any(sw in lower_line for sw in stop_words):
             break
-        
         if 'ингредиент' in lower_line:
             continue
-        
         ingredients.append(line_stripped)
-    
     result = f"<b>{title}</b>\n\n"
     result += "<b>📝 Ингредиенты:</b>\n\n"
     result += '\n'.join(ingredients) + "\n\n"
     result += "<i>🥰 Понравилось?</i>\n"
     result += "<b>Поделись с другом!</b>\n\n"
     result += "<b><a href='https://max.ru/channel_recept_every_day'>Рецепты на Каждый день 🥗</a></b>"
-    
     return result
 
 def send_message_to_user(chat_id, text):
@@ -219,7 +254,7 @@ def send_message_to_user(chat_id, text):
 # ==== ВЕБХУК ====
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global processed_mids, nails_queue
+    global processed_mids
     
     secret_header = request.headers.get('X-Max-Bot-Api-Secret')
     if secret_header != WEBHOOK_SECRET:
@@ -235,7 +270,6 @@ def webhook():
         message = data.get("message", {})
         mid = message.get("body", {}).get("mid", "")
         
-        # 🔒 ЗАЩИТА ОТ ДУБЛИКАТОВ
         if mid in processed_mids:
             print(f"⏭️ Дубликат {mid}, пропускаю", flush=True)
             return jsonify({"ok": True}), 200
@@ -253,22 +287,21 @@ def webhook():
             print(f"⛔ Игнорирую постороннего (ID: {sender_id})", flush=True)
             return jsonify({"ok": True}), 200
         
-        # ==== ПРОВЕРКА: ЕСТЬ ЛИ ФОТО? ====
+        # ==== ФОТО НОГТЕЙ ====
         attachments = message.get("body", {}).get("attachments", [])
         photo_token = None
         
         for att in attachments:
             if att.get("type") == "image":
-                # Берём token напрямую из payload — MAX уже загрузил фото!
                 photo_token = att.get("payload", {}).get("token")
                 if photo_token:
                     print(f"📸 Получен token фото: {photo_token[:50]}...", flush=True)
                 break
         
         if photo_token:
-            nails_queue.append(photo_token)
-            send_message_to_user(chat_id, f"✅ Фото добавлено в очередь ногтей. В очереди: {len(nails_queue)} шт.")
-            print(f"📋 В очереди ногтей: {len(nails_queue)} шт.", flush=True)
+            supabase_add_nail(photo_token)
+            count = supabase_count_nails()
+            send_message_to_user(chat_id, f"✅ Фото добавлено в очередь ногтей. В очереди: {count} шт.")
             return jsonify({"ok": True}), 200
         
         if msg_text and chat_id:
@@ -297,10 +330,9 @@ def webhook():
 # ==== ПЛАНИРОВЩИК ====
 @app.route('/cron', methods=['GET'])
 def cron():
-    global scheduled_posts, nails_queue
+    global scheduled_posts
     now = datetime.now().strftime("%H:%M")
     
-    # Обычные отложенные посты
     if now in scheduled_posts:
         print(f"⏰ Время {now}! Публикую отложенные посты...", flush=True)
         for post_data in scheduled_posts[now]:
@@ -309,17 +341,22 @@ def cron():
         print(f"✅ Отложенные посты за {now} опубликованы", flush=True)
     
     # ==== НОГТИ ====
-    if now in NAILS_SLOTS and nails_queue:
-        print(f"💅 Время {now}! Публикую ногти...", flush=True)
-        token = nails_queue.pop(0)
-        success = send_nails_post(token)
-        if success:
-            print(f"✅ Ногти опубликованы, в очереди осталось: {len(nails_queue)}", flush=True)
+    if now in NAILS_SLOTS:
+        nail = supabase_get_first_nail()
+        if nail:
+            print(f"💅 Время {now}! Публикую ногти (id={nail['id']})...", flush=True)
+            success = send_nails_post(nail['token'])
+            if success:
+                supabase_delete_nail(nail['id'])
+                count = supabase_count_nails()
+                print(f"✅ Ногти опубликованы, в очереди осталось: {count}", flush=True)
+            else:
+                print(f"❌ Не удалось опубликовать ногти, оставляю в очереди", flush=True)
         else:
-            nails_queue.insert(0, token)
-            print(f"❌ Не удалось опубликовать ногти, вернул в очередь", flush=True)
+            print(f"💅 Время {now}! Очередь ногтей пуста", flush=True)
     
-    return jsonify({"ok": True, "time": now, "nails_in_queue": len(nails_queue)}), 200
+    count = supabase_count_nails()
+    return jsonify({"ok": True, "time": now, "nails_in_queue": count}), 200
 
 @app.route('/schedule', methods=['POST'])
 def schedule():

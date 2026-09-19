@@ -5,7 +5,7 @@ import time
 import requests
 import urllib3
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -34,7 +34,10 @@ CHANNELS = {
     "тестовый калл": -78989554222336
 }
 
+# ==== НАСТРОЙКИ НОГТЕЙ ====
+# Ногти идут в БОЕВОЙ канал «Гламурный Маникюр»
 NAILS_CHANNEL_ID = -78143961564416
+
 NAILS_SLOTS = ["11:00", "13:00", "15:00", "17:00", "19:00", "21:00"]
 NAILS_CAPTION = "<b>Гламурный Маникюр 💅 НОГТИ</b>\n<a href='https://max.ru/channel_glamour_manic'>Подписаться</a>"
 
@@ -54,12 +57,14 @@ SUPABASE_HEADERS = {
 ADMIN_USER_ID = 68399360
 WEBHOOK_SECRET = "your_secret_here_change_me"
 
+# Часовой пояс (UTC+5)
+TIMEZONE_OFFSET = 5
+
 scheduled_posts = {}
 processed_mids = set()
 
 # ==== ФУНКЦИИ SUPABASE ====
 def supabase_add_nail(token):
-    """Добавляет токен в очередь ногтей в Supabase"""
     url = f"{SUPABASE_URL}/rest/v1/nails"
     payload = {"token": token}
     try:
@@ -75,7 +80,6 @@ def supabase_add_nail(token):
         return False
 
 def supabase_get_first_nail():
-    """Берёт первый токен из очереди ногтей"""
     url = f"{SUPABASE_URL}/rest/v1/nails?select=id,token&order=id.asc&limit=1"
     try:
         res = requests.get(url, headers=SUPABASE_HEADERS, verify=False)
@@ -89,7 +93,6 @@ def supabase_get_first_nail():
         return None
 
 def supabase_delete_nail(nail_id):
-    """Удаляет токен из очереди после публикации"""
     url = f"{SUPABASE_URL}/rest/v1/nails?id=eq.{nail_id}"
     try:
         res = requests.delete(url, headers=SUPABASE_HEADERS, verify=False)
@@ -104,7 +107,6 @@ def supabase_delete_nail(nail_id):
         return False
 
 def supabase_count_nails():
-    """Считает количество токенов в очереди"""
     url = f"{SUPABASE_URL}/rest/v1/nails?select=id"
     try:
         res = requests.get(url, headers=SUPABASE_HEADERS, verify=False)
@@ -138,7 +140,6 @@ def send_message_to_channel(channel_id, text):
         return False
 
 def send_nails_post(token):
-    """Отправка поста с ногтями в канал"""
     url = f"{API_URL}/messages"
     params = {"chat_id": NAILS_CHANNEL_ID}
     payload = {
@@ -287,7 +288,6 @@ def webhook():
             print(f"⛔ Игнорирую постороннего (ID: {sender_id})", flush=True)
             return jsonify({"ok": True}), 200
         
-        # ==== ФОТО НОГТЕЙ ====
         attachments = message.get("body", {}).get("attachments", [])
         photo_token = None
         
@@ -331,7 +331,7 @@ def webhook():
 @app.route('/cron', methods=['GET'])
 def cron():
     global scheduled_posts
-    now = datetime.now().strftime("%H:%M")
+    now = (datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)).strftime("%H:%M")
     
     if now in scheduled_posts:
         print(f"⏰ Время {now}! Публикую отложенные посты...", flush=True)
@@ -340,7 +340,6 @@ def cron():
         del scheduled_posts[now]
         print(f"✅ Отложенные посты за {now} опубликованы", flush=True)
     
-    # ==== НОГТИ ====
     if now in NAILS_SLOTS:
         nail = supabase_get_first_nail()
         if nail:
@@ -385,4 +384,5 @@ def index():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 Flask сервер стартует на порту {port}", flush=True)
+    print(f"🎯 Канал ногтей: {NAILS_CHANNEL_ID} (боевой)", flush=True)
     app.run(host='0.0.0.0', port=port)
